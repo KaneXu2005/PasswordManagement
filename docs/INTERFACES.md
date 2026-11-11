@@ -111,3 +111,81 @@ syncs it, then atomically replaces the old file. Initialization uses atomic
 hard-link publication so a competing existing file cannot be overwritten. POSIX
 files are created with mode 0600. Cleanup normally removes temporary files; a
 cleanup error preserves the original save error or reports successful publication.
+
+## Bonus sharing API and package format
+
+```python
+from sharing import generate_keypair, export_entry, import_entry
+
+generate_keypair(private_path, public_path, passphrase)   # -> None
+export_entry(entry, recipient_public_path, output_path) # -> None
+entry = import_entry(package_path, private_path, passphrase)
+```
+
+The CLI provides `keygen`, `share` and `receive`. `receive` authenticates the
+destination vault, decrypts the package, then calls `add_entry` and `save_vault`;
+it refuses duplicate sites and never prints the received password. The sharing
+module does not read a vault or accept its master password.
+
+Keys are fixed to RSA-3072 with exponent 65537. The public PEM uses SubjectPublicKeyInfo;
+the private PEM uses encrypted PKCS8 and `BestAvailableEncryption`. A separate
+non-empty passphrase of at most 1023 UTF-8 bytes is required; spaces are preserved.
+Unencrypted private keys and unsupported key types or sizes are rejected.
+Key files are limited to 64 KiB. Output parents must exist, POSIX mode is 0600,
+and hard-link publication refuses existing files or symlinks. A failed two-file
+key generation attempts to remove any output it published; this is sequential
+use, with the same filesystem/power-loss limitations as vault initialization.
+Temporary-file cleanup failure after publication reports that files were saved.
+
+Version 1 packages have exactly these fields:
+
+```json
+{
+  "algorithm": "RSA-OAEP-SHA256+AES-256-GCM",
+  "ciphertext": "<Base64: encrypted entry JSON plus 16-byte GCM tag>",
+  "nonce": "<Base64: 12 random bytes>",
+  "version": 1,
+  "wrapped_key": "<Base64: 384-byte RSA-OAEP ciphertext>"
+}
+```
+
+Each export generates a new random 32-byte AES key and nonce. OAEP uses SHA-256
+for both its hash and MGF1, with no label. The decrypted payload is one entry
+object, not an entry list. The compact, sorted-key JSON encoding of `version`,
+`algorithm` and `wrapped_key` is GCM AAD. The outer package uses sorted keys,
+two-space indentation and a final newline; altered presentation, duplicate fields,
+unknown versions/fields, invalid Base64 and packages above 16 MiB are rejected.
+Only authenticated and validated plaintext is returned. `SharingError(VaultError)`
+covers key/package/I/O failures; invalid entries use `EntryValidationError`, and
+invalid passphrase arguments use `ValueError`.
+
+The format provides recipient confidentiality and tamper detection, without
+sender signatures, replay protection or key revocation. The caller must verify
+the recipient public key and trust the package's sender separately.
+
+## Bonus breach-check API
+
+```python
+from breach import check_password
+
+count = check_password(password) # -> non-negative int; 0 means no dataset match
+```
+
+Only the explicit `check` CLI command uses this API. With a site argument, it
+unlocks that entry; without one, it privately prompts without opening a vault.
+On success stdout is JSON with `breached` and `count`, exit 0; stderr announces
+the network lookup. A known breached password is a successful lookup, not an
+operation failure. HTTP/TLS/network/protocol errors raise
+`BreachCheckError(VaultError)`, exit 1 with no result JSON. Invalid password
+arguments raise `ValueError`.
+
+The client sends only the first five uppercase hexadecimal characters of the
+complete password's UTF-8 SHA-1 to the fixed HTTPS Pwned Passwords range endpoint,
+uses default certificate verification and `Add-Padding: true`, and matches the
+remaining 35 characters locally. It refuses redirects and non-200 status,
+sets a 10-second connection timeout and reads at most 1 MiB plus one byte to
+detect an oversized response. Every nonempty response record must contain a
+35-character hexadecimal suffix and a non-negative decimal count (up to 20 digits).
+Zero-count padding is ignored; duplicate positive records and malformed records
+fail the whole lookup. No response or password/hash is persisted or logged,
+and there is no automatic retry. Tests mock transport so the suite stays offline.
