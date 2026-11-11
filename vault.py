@@ -1,4 +1,4 @@
-"""Command-line password manager. C's UI calls A's public storage API."""
+"""Command-line password manager with optional sharing and breach checks."""
 
 import argparse
 import getpass
@@ -9,8 +9,10 @@ from typing import List, Optional
 import warnings
 
 from entries import add_entry, delete_entry, get_entry, list_entries
+from breach import check_password
 from errors import VaultError
 from generator import DEFAULT_LENGTH, MAX_LENGTH, MIN_LENGTH, generate_password
+from sharing import export_entry, generate_keypair, import_entry
 from storage import initialize_vault, load_vault, save_vault
 
 
@@ -36,6 +38,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ("get", "reveal one account, including its password"),
         ("delete", "delete one account"),
         ("gen", "generate a strong password without opening a vault"),
+        ("keygen", "generate an encrypted RSA private key and a public key for sharing"),
+        ("share", "encrypt one entry for a recipient's public key"),
+        ("receive", "decrypt a shared entry and add it to this vault"),
+        ("check", "explicitly query HIBP using only a five-character hash prefix"),
     ):
         subparser = commands.add_parser(name, help=help_text)
         # Accept --file before OR after the subcommand without overwriting a
@@ -51,6 +57,17 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("get", "delete"):
         subparsers[name].add_argument("site", help="case-sensitive site label")
     subparsers["gen"].add_argument("--length", type=_password_length, default=DEFAULT_LENGTH, help="password length, 12-1024 (default: 20)")
+    keys = subparsers["keygen"]
+    keys.add_argument("--private-key", type=Path, required=True, help="new encrypted private PEM file; keep it secret")
+    keys.add_argument("--public-key", type=Path, required=True, help="new public PEM file to give to senders")
+    share = subparsers["share"]
+    share.add_argument("site", help="case-sensitive site label to share")
+    share.add_argument("--recipient-key", type=Path, required=True, help="recipient's verified public PEM file")
+    share.add_argument("--out", type=Path, required=True, help="new encrypted share file; never overwritten")
+    receive = subparsers["receive"]
+    receive.add_argument("package", type=Path, help="encrypted share file")
+    receive.add_argument("--private-key", type=Path, required=True, help="recipient's encrypted private PEM file")
+    subparsers["check"].add_argument("site", nargs="?", help="stored site; omit to enter a password privately without a vault")
     return parser
 
 
@@ -83,6 +100,15 @@ def _run(args: argparse.Namespace) -> None:
     if args.command == "gen":
         print(generate_password(args.length))
         return
+    if args.command == "keygen":
+        passphrase = _confirmed_secret("Private-key passphrase: ", "Confirm private-key passphrase: ")
+        generate_keypair(args.private_key, args.public_key, passphrase)
+        print("Sharing keys created. Keep the private key and its passphrase secret.")
+        return
+    if args.command == "check" and args.site is None:
+        password = _read_secret("Password to check: ")
+        _check_breach(password)
+        return
     if args.command == "init":
         master = _confirmed_secret("Master password: ", "Confirm master password: ")
         initialize_vault(args.file, master)
@@ -106,6 +132,23 @@ def _run(args: argparse.Namespace) -> None:
         updated = delete_entry(entries, args.site)
         save_vault(args.file, master, updated)
         print("Entry deleted.")
+    elif args.command == "share":
+        export_entry(get_entry(entries, args.site), args.recipient_key, args.out)
+        print("Encrypted entry exported for the recipient.")
+    elif args.command == "receive":
+        passphrase = _read_secret("Private-key passphrase: ")
+        entry = import_entry(args.package, args.private_key, passphrase)
+        updated = add_entry(entries, entry["site"], entry["username"], entry["password"])
+        save_vault(args.file, master, updated)
+        print("Shared entry added. Use get to reveal its password.")
+    elif args.command == "check":
+        _check_breach(get_entry(entries, args.site)["password"])
+
+
+def _check_breach(password: str) -> None:
+    print("Querying HIBP over HTTPS; only the first 5 SHA-1 hash characters are sent.", file=sys.stderr)
+    count = check_password(password)
+    print(json.dumps({"breached": count > 0, "count": count}))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
