@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local password-manager data and development artifacts
+.DS_Store
+work/
+vault.json
+.vault.json.*.tmp
+*.pem
