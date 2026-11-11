@@ -28,5 +28,6 @@ work/
 vault.json
 .vault.json.*.tmp
 *.pem
+*.share.json
 .DS_Store
 tempCodeRunnerFile.py
