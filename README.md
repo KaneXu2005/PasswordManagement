@@ -9,106 +9,165 @@ Software Security PasswordManagement Project
 | Jim | 2023901704 |
 | Enzo | 2023905940 |
 
-## Current status
+## Status and scope
 
-A's encrypted-vault backend is implemented. The complete course application is
-not finished: C owns the CLI, account operations and strong password generator;
-B owns the optional encrypted sharing and breach check. A/B/C are role labels,
-not an assumed mapping to the names above.
+The four required building blocks and the minimum CLI are implemented: A owns
+Argon2id verification/key derivation, AES-GCM and encrypted storage; C owns account
+operations, CLI interaction and the secure password generator. B's optional sharing
+and breach check are not part of this handoff and remain to be integrated. A/B/C
+are role labels, not an assumed mapping to the names above.
 
-Read [the shared version 1 interface contract](docs/INTERFACES.md) before adding
-features. It defines public functions, entries, exceptions and the on-disk format.
-[A's explanation and manual verification guide](docs/A_GUIDE.md) covers the crypto.
-[The verification record](docs/VERIFICATION.md) reports 36 passing backend tests.
-[The requirement checklist](docs/REQUIREMENTS_CHECK.md) maps A's work to the course.
+The demonstration target is macOS, tested with Python 3.9.6. Windows is not a
+validated target. See the [interface contract](docs/INTERFACES.md),
+[A's guide](docs/A_GUIDE.md), [C's guide](docs/C_GUIDE.md),
+[A's verification record](docs/VERIFICATION.md) and
+[C's verification record](docs/C_VERIFICATION.md).
 
-## Setup and backend verification
+## Install and run on the Mac
 
-Python 3.9+:
+From the project directory:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m unittest discover -s tests -v
+source .venv/bin/activate
+python vault.py --help
 ```
 
-On Windows use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
-Test data and temporary files stay in the ignored `work/` directory.
-There is no `vault.py` CLI yet; do not treat the course's example commands as
-implemented commands.
+The remaining examples assume this virtual environment is active. Each teammate
+creates their own environment; do not copy `.venv` or commit it.
 
-## Backend API
+## Commands
 
-```python
-from storage import initialize_vault, load_vault, save_vault
-
-# `master_password` should come from getpass(), never a hard-coded real secret.
-initialize_vault("vault.json", master_password)
-entries = load_vault("vault.json", master_password)
-# C modifies entries in memory, then saves the entire list:
-save_vault("vault.json", master_password, entries)
+```bash
+python vault.py init
+python vault.py add github --user alice
+python vault.py list
+python vault.py get github
+python vault.py delete github
+python vault.py gen --length 20
 ```
 
-Each entry contains exactly `site`, `username`, `password`, all non-empty strings.
-Version 1 allows one entry per site, with case-sensitive matching. Read-modify-write
-operations must run sequentially: there is no multi-process conflict detection.
+- `init`: enter a master password twice to create an encrypted empty vault. Use a
+  long, unique passphrase. Existing files are never overwritten by initialization.
+- `add`: unlock with the master password and add one site/username/password. It
+  generates a 20-character account password unless another mode is requested.
+- `list`: unlock and print JSON summaries with site/username only, never passwords.
+- `get SITE`: unlock and print the selected complete entry as JSON. This explicitly
+  reveals its password; JSON escapes describe characters, not extra password text.
+- `delete SITE`: unlock and remove the entry. There is no extra confirmation after
+  the master password; missing sites are errors.
+- `gen`: print a fresh password without unlocking or creating a vault.
 
-## Why these cryptographic choices? (A's part)
+Two add modes:
 
-- **Argon2id rather than SHA-256 or AES for the master password:** Argon2id makes
-  guessing expensive in memory and computation; SHA-256 alone is deliberately
-  fast, and AES is reversible encryption requiring a separate secret key. A fresh
-  salt prevents equal passwords from producing equal verifiers across vaults.
-- **Derive the encryption key rather than store it beside the vault:** a stolen
-  vault plus a plaintext key file would expose every entry. The AES key here is
-  recomputed using the supplied master password and an independent public salt.
-  The stored password-verification hash is not used as the AES key.
-- **AES-GCM rather than unauthenticated encryption:** GCM detects changes before
-  any plaintext is returned. The public header is authenticated as AAD; a fresh
-  random 12-byte nonce is generated on every encryption. The library appends a
-  16-byte authentication tag to the ciphertext.
-- **Libraries and parameters:** `argon2-cffi` handles Argon2id hashing and raw key
-  derivation; `cryptography` supplies AESGCM. Explicit Argon2id parameters are
-  65536 KiB memory, 3 iterations, parallelism 4, a 16-byte salt and 32-byte output,
-  matching the documented RFC 9106 low-memory profile. The two Argon2 uses have
-  independent salts. The v1 profile is fixed and checked before expensive work.
-  These established libraries provide standard implementations instead of custom
-  hashing or encryption; PasswordHasher handles encoded verifier generation and
-  verification, and AESGCM checks its tag before returning plaintext.
+```bash
+python vault.py add mail --user alice@example.com --length 28
+python vault.py add school --user student123 --prompt-password
+```
 
-The password-generator explanation (`secrets` versus `random`) belongs to C and
-must be added with that implementation. B must document any implemented bonus.
-These notes are a starting point: every group member must understand the code
-and explain the final choices in their own words.
+`--prompt-password` reads the account password privately twice. It cannot be
+combined with `--length`. Master passwords and manual account passwords are never
+accepted as command-line values, and spaces in passwords are preserved. Input is
+hidden, so nothing appearing while you type is normal. If hidden input is not
+available, the operation fails instead of falling back to echoing the password.
+Use a real terminal for vault operations; `gen` does not need one.
+
+`--file` works before or after the subcommand:
+
+```bash
+mkdir -p work
+python vault.py --file work/demo-vault.json init
+python vault.py add github --user alice --file work/demo-vault.json
+python vault.py get github --file work/demo-vault.json
+```
+
+The default is `vault.json` in the current working directory. Parent directories
+must already exist. Do not edit/reformat a vault or commit real credential data.
+Version 1 allows one entry per case-sensitive site and has a 16 MiB file limit.
+Read-modify-write operations must be sequential; concurrent writers are unsupported.
+
+Successful commands return 0. Vault/input failures print `Error:` to standard error
+and return 1; invalid arguments return 2; Ctrl+C returns 130. Failures never trigger
+a reset or silent replacement of an unreadable vault.
+
+## Why these choices?
+
+1. **Argon2id for the master password, not SHA-256 or AES.** Argon2id adds memory
+   and computation costs to each guess; SHA-256 alone is deliberately fast. AES is
+   reversible and would require a separate secret key. Random salts prevent equal
+   passwords from producing equal verifiers across vaults. Weak passwords can
+   still be guessed. The stored verifier starts with `$argon2id$`.
+2. **Derive the AES key, do not save it beside the vault.** A stolen vault plus a
+   plaintext key file would expose every account. We derive a 32-byte AES key from
+   the entered master password and an independent public Argon2id salt. The stored
+   verifier is not used as the AES key; no vault encryption key is written to disk.
+3. **AES-GCM instead of unauthenticated encryption.** GCM provides authentication
+   as well as confidentiality, so modified encrypted data is rejected before any
+   plaintext is returned. AAD binds the public header to the tag. Each encryption
+   generates a fresh random 12-byte nonce; the library appends a 16-byte tag. The
+   file also has one fixed JSON encoding so formatting edits are rejected.
+4. **`secrets`, not the default `random` generator.** Python's default `random`
+   generator is for simulation and is predictable when its state is known.
+   `secrets.choice` uses the operating system's cryptographically secure random
+   source. Each character is sampled from 94 printable ASCII letters, digits and
+   punctuation symbols. Candidates without a lowercase letter, uppercase letter,
+   digit or symbol are rejected and regenerated. This yields uniform sampling
+   within the accepted set, without a predictable template. Default length is 20;
+   our CLI permits 12-1024 characters. These limits are project policy, not exact
+   lengths prescribed by the course.
+5. **Use established libraries, not custom cryptography.** `argon2-cffi` implements
+   Argon2id hashing, verification and raw key derivation; `cryptography` supplies
+   AESGCM and checks its tag before returning plaintext. Explicit Argon2id settings
+   are 65536 KiB memory, 3 iterations, parallelism 4, 16-byte salts and 32-byte
+   output, matching the documented RFC 9106 low-memory profile. Verification and
+   key derivation have independent salts. Version 1 fixes and bounds parameters
+   before expensive work, rather than trusting attacker-controlled costs.
+
+Every group member must understand these choices and explain the final code in
+their own words. Bonus-specific design explanations belong with B's implementation.
 
 ## Security model
 
 A stolen vault file contains public metadata and authenticated encrypted entries,
-not the plaintext master password, plaintext accounts or an AES key file. A strong
-master password is still necessary: offline guessing remains possible.
+not plaintext credentials or an AES key file. A strong master password is still
+necessary because offline guessing remains possible.
 
 This tool does not protect against keyloggers, a compromised computer, weak master
 passwords, screen observation or plaintext in the unlocked process's memory.
-Python cannot reliably erase secret objects from memory; swap and crash dumps are
-outside this tool's control. There is no forgotten-password recovery, rollback
-protection, concurrent-writer support or guaranteed power-loss recovery. The v1
-file has a fixed JSON byte representation: changing whitespace, key order or the
-final newline is rejected by format validation; altered authenticated values or
-encrypted data are rejected by format/password checks or AES-GCM authentication.
-Do not edit or reformat a vault by hand. POSIX files are created with mode 0600; other systems
-need appropriate filesystem permissions. Initialization requires a filesystem
-supporting hard links to publish a complete file without overwriting a target.
+Python cannot reliably erase secrets from memory; swap and crash dumps are outside
+this tool's control. There is no forgotten-password recovery, rollback protection,
+concurrent-writer support or guaranteed power-loss recovery. `get` and `gen`
+intentionally reveal a password on screen. No network is needed for the required
+features; B's future optional breach check is the networked extension.
 
-## Before submitting the complete project
+POSIX vault files use mode 0600; other systems need appropriate filesystem
+permissions. Initialization requires a filesystem supporting hard links. The v1
+JSON byte representation is fixed: changing whitespace, key order or the final
+newline is rejected by format validation. Encrypted data and header values are
+protected by AES-GCM and format/password checks. A cleanup failure can leave an
+encrypted temporary file; if publication already succeeded, the error says the
+vault was saved. Neither formatting checks nor file permissions replace encryption.
 
-- C: implement and test init/add/list/get/delete/gen and document their exact usage.
-- C: explain why the generator uses `secrets` instead of `random`.
-- B: integrate bonus features after all four required blocks pass; explain the design.
-- Everyone: review the security model, run the complete CLI checks and be ready to
-  explain any cryptographic line. Do not commit real vaults or private keys.
+## Verification
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Tests use fake credentials and keep temporary files under ignored `work/`.
+Coverage includes A's crypto/storage checks, generator length/character policy,
+account operations, CLI success and error behavior, real Mac terminal sessions,
+hidden input and explicit password reveal. All 72 A+C tests passed on the Mac, including an isolated A-baseline + C-package
+integration check. The actual results and handoff-package verification are recorded in [C's verification record](docs/C_VERIFICATION.md).
+
+B should integrate its optional feature only after the four required blocks pass.
+The group should run the complete demonstration on the actual presentation Mac.
 
 ## References
 
-- [Project requirements](https://kristenpire.github.io/epita-security-labs/project2/)
+- [Course requirements](https://kristenpire.github.io/epita-security-labs/project2/)
 - [argon2-cffi API and profiles](https://argon2-cffi.readthedocs.io/en/stable/api.html)
 - [cryptography AESGCM](https://cryptography.io/en/stable/hazmat/primitives/aead/#cryptography.hazmat.primitives.ciphers.aead.AESGCM)
+- [Python secrets](https://docs.python.org/3/library/secrets.html)
+- [Python getpass](https://docs.python.org/3/library/getpass.html)

@@ -225,3 +225,6 @@ work/
 vault.json
 .vault.json.*.tmp
 *.pem
+
+# Local handoff archives; submit the source files instead
+/outputs/

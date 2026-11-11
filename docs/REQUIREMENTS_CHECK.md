@@ -2,7 +2,7 @@
 
 Source: [Project 2 — Password manager](https://kristenpire.github.io/epita-security-labs/project2/),
 read again on 2026-11-11. This checklist separates course requirements from team
-implementation choices. It is not a claim that B/C's work has been completed.
+implementation choices. C's current evidence is linked below; B's bonus remains pending.
 
 | Course requirement relevant to A | Implementation / evidence | Status |
 | --- | --- | --- |
@@ -18,10 +18,11 @@ implementation choices. It is not a claim that B/C's work has been completed.
 
 ## Integration still required
 
-C must connect the backend to a working CLI with initialization/unlock and
-add/list/get/delete, implement `secrets` password generation and document its
-reasoning. B owns the optional sharing and breach check. The group must then run
-complete CLI acceptance checks; backend tests do not substitute for this.
+C has implemented initialization/unlock, add/list/get/delete and `secrets`
+password generation, and added usage/design explanations to the main README.
+[C verification](C_VERIFICATION.md) covers the combined suite and real-terminal
+CLI checks. B still owns optional sharing and breach check. The group should
+rehearse the final demonstration after B integrates its changes.
 
 ## Team design choices, not extra course requirements
 
@@ -38,9 +39,8 @@ accurately during demonstration.
 
 ## Useful next optimizations
 
-1. Before final submission, C should provide exact CLI examples and include a
-   reproducible command-line tampering demonstration using fake data. A supplies
-   the backend and current tests, not a second competing CLI.
+1. C now provides exact CLI examples and integrated CLI tampering checks, using
+   fake data. Keep this as the single CLI and rehearse it on the presentation Mac.
 2. If teammates use Windows or another target environment, run this same test
    suite there. Initialization uses atomic hard-link publication; filesystem
    compatibility is documented but has only been tested on the current Mac.
@@ -51,4 +51,5 @@ accurately during demonstration.
 4. Keep final README focused on design reasons and a short acceptance summary;
    detailed troubleshooting and historical test records can stay in docs.
 
-Latest result: 36 tests passed. See [verification record](VERIFICATION.md).
+A-stage result: 36 backend tests passed. See [A record](VERIFICATION.md) and the
+[current combined result](C_VERIFICATION.md).

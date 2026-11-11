@@ -10,7 +10,7 @@
 - B: `sharing.py`, `breach_check.py`, bonus tests and explanations.
 - Everyone: understand the crypto, review README and complete final acceptance.
 
-C、B 尚未实现；A 不创建同名占位模块，避免队友接入时误用。
+A 的后端和 C 的主体 CLI 已实现；B 的 bonus 仍待接入。C 的代码在本地交接分支中准备，交给 C 理解、检查后由其自己的分支提交。
 
 ## Public storage API
 
@@ -94,9 +94,31 @@ B 查询泄露时：对选定密码计算 SHA-1，仅向 HIBP 发送前 5 个十
 - `version`、`master_hash`、`kdf` 的规范化 JSON（键排序、UTF-8、无额外空格）作为 GCM AAD，认证公共头部。
 - nonce 和密文／标签发生修改会使解密失败；头部修改会被格式检查、主密码验证或认证检查拒绝。
 - 为对齐课程“文件改一个字节就应报错”的验收，v1 固定外层 JSON 编码：UTF-8、键排序、两空格缩进、末尾一个换行。排版、键顺序、转义或末尾换行变化也会被格式检查拒绝；字段值和密文的完整性由 AES-GCM 验证。禁止手工编辑或重新格式化保险箱。
-- 本次将尚未提交的 v1 草案从“允许等价 JSON 排版”收紧为上述固定编码。字段和三个函数签名不变；旧草案生成的文件不保证可读，不能通过捕获错误后重新初始化来迁移真实数据。当前项目内只有自动生成的测试数据，无需迁移实际保险箱。
+- A 的最终 v1 已在提交 `e7fd308` 中固定为上述编码。更早的本地草案文件不保证可读，不能通过捕获错误后重新初始化来迁移真实数据。C 沿用该格式，不修改 A 的三个存储接口。
 - 文件最大 16 MiB；拒绝未知字段、重复 JSON 字段、无效 Base64 和不支持的版本。参数升级需要显式设计新版本／迁移，不能静默修改 v1。
 - 同目录临时文件只包含加密文件内容；完成写入后原子替换。初始化使用原子硬链接发布，目标已存在时失败。
 - 临时文件通常自动清理；若清理也失败，可能留下加密的 `.tmp` 文件。主保存失败时保留原始错误；若文件已发布而清理失败，`VaultIOError` 消息明确写出 `Vault was saved`。C 应显示具体消息，不能自动重试初始化或清空保险箱。
 - 临时文件和保险箱在 POSIX 上权限为 0600。Windows 应另用系统 ACL 保护文件。
 - C 和 B 不直接读写、修改以上字段，统一调用 storage API。
+
+## C's implemented API and commands
+
+- `entries.add_entry(entries, site, username, password)` returns a new complete list.
+- `entries.list_entries(entries)` returns sorted site/username summaries, omitting passwords.
+- `entries.get_entry(entries, site)` returns a detached complete entry.
+- `entries.delete_entry(entries, site)` returns a new list without that site.
+- `entries.EntryNotFoundError` inherits `VaultError`; missing get/delete is an error.
+- `generator.generate_password(length=20)` returns a secure password. Length is an integer in 12-1024; each candidate must contain lowercase, uppercase, digits and symbols.
+- Entry operations reuse A's existing `crypto.validate_entries` for the data contract; they never call crypto primitives or access the vault file directly.
+
+CLI: `init`, `add SITE --user USER`, `list`, `get SITE`, `delete SITE`, `gen --length N`.
+`add` defaults to generation; `--length N` sets generated length; mutually exclusive
+`--prompt-password` requests hidden manual entry and confirmation. `--file PATH`
+works before or after the subcommand. Init confirms the master password. Each
+vault-access command prompts once for the master password; `gen` does not unlock.
+List/get return JSON. Use a real terminal; unsafe echoing input fallback is rejected.
+
+Success exits 0, operation/input failure exits 1, argument error exits 2, Ctrl+C
+exits 130. C does not implement B's subcommands or network requests. B can extend
+`vault._build_parser` and `vault._run` while retaining these existing command/error
+behaviors and A's storage API. Detailed usage is in the main README.

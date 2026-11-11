@@ -1,5 +1,8 @@
 # A backend verification record
 
+This is the historical A-stage record. C has since implemented the CLI and
+generator; see [C verification](C_VERIFICATION.md) for the combined current result.
+
 Date: 2026-11-11 (Europe/Paris).
 Scope: A's backend only, not the complete course application.
 All project code, environment files and test fixtures were created inside
